@@ -1,8 +1,15 @@
 #!/usr/bin/env bash
 
 ##################################################
-# Use this script for adding user name and email #
+# Use this script for adding git user and email  #
 ##################################################
+
+pacman -Qi git >/dev/null 2>&1
+
+if [ $? -ne 0 ]; then
+	echo "git is not installed in this system. Installing now..."
+	sudo pacman -S git
+fi
 
 read -p "Enter your git user name here: " user
 
