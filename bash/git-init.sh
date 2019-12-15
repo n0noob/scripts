@@ -32,6 +32,8 @@ echo "Setting email : >$email<"
 
 git config --global user.name "\"$user\""
 git config --global user.email "\"$email\""
+git config --global credential.helper cache
+git config --global credential.helper 'cache --timeout=3600'
 
 echo "git config --global --list"
 
