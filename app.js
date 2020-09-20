@@ -1,9 +1,25 @@
 const simpleGit = require('simple-git');
 const fs  = require('fs-extra');
-const parseGitURL = require('./src/utils');
+const commandLineArgs = require('command-line-args');
+const commandLineUsage = require('command-line-usage');
 
-const inputRemoteDir = 'https://github.com/tensorflow/tfjs/tree/master/tfjs-vis/demos/api';
+const parseGitURL = require('./src/utils');
+const clObject = require('./src/cl-options');
+
+let inputRemoteDir;
 const tempDir = '/tmp';
+
+/* Command line options processing */
+const options = commandLineArgs(clObject.optionDefinitions);
+const usage = commandLineUsage(clObject.sections);
+
+if( !clObject.validatefields(options) ) {
+  console.log(usage);
+  return 1;
+}
+/* Command line options processing ends */
+
+inputRemoteDir = options.url;
 
 
 (async () => {

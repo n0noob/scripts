@@ -5,11 +5,15 @@
   "main": "app.js",
   "author": "n0noob",
   "license": "MIT",
+  "bin": {
+    "git-dir": "./bin/index.js:"
+  },
   "scripts": {
     "dev": "node app"
   },
   "dependencies": {
     "command-line-args": "^5.1.1",
+    "command-line-usage": "^6.1.0",
     "fs-extra": "^9.0.1",
     "simple-git": "^2.20.1"
   }
