@@ -6,7 +6,7 @@ Manually calculating time spent in doing a task(like doing leetcode) was manual 
 ### Purpose
 This is a timer that I use for assessing the time spent in solving coding problems.
 
-## How do I use it?
+### How do I use it?
 Make the script executable:
 ```
 $ chmod 755 ./timer.py
