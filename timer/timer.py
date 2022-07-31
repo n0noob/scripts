@@ -5,9 +5,9 @@ import time
 import signal
 import sys
 
-#################################################
-# This script can be used as a generic timer
-#################################################
+######################
+# Leetcode timer
+######################
 
 
 def main(stdscr):
@@ -31,12 +31,17 @@ def main(stdscr):
         stdscr.addstr(2, 1, "########################################")
         stdscr.addstr(3, 1, f"{min_elapsed} minutes elapsed")
         stdscr.addstr(4, 1, f"Press [q] to stop the timer")
+        stdscr.addstr(5, 1, f"Press [N] to start new timer")
+        stdscr.addstr(6, 1, f"Input: ")
         
         stdscr.refresh()
         key_pressed = stdscr.getch()
         if key_pressed == ord('q'):
             stdscr.nodelay(False)
             break
+        elif key_pressed == ord('N'):
+            start_time = time.time()
+            continue
         time.sleep(1)
     stdscr.clear()
     stdscr.addstr(0, 1, f"{min_elapsed} minutes elapsed")
