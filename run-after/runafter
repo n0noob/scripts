@@ -1,0 +1,114 @@
+#!/usr/bin/env python3
+
+import argparse
+import logging.config
+import os
+import time
+import subprocess
+import logging
+
+logging.basicConfig(level=logging.DEBUG, format="%(levelname)s: %(message)s")
+logger = logging.getLogger(__name__)
+
+def parse_args():
+    """
+    Parse command line arguments.
+    Returns:
+        argparse.Namespace: Parsed arguments containing:
+            - pid: Process ID to monitor
+            - command: Command to execute after process ends
+    """
+    parser = argparse.ArgumentParser(description="Runs given command after target process ends")
+    process_identification = parser.add_mutually_exclusive_group(required=True)
+    process_identification.add_argument("-p", "--pid", type=int, help="Process id of the process to be tracked.")
+    process_identification.add_argument("-s", "--process-search-string", type=str, help="Uses 'pgrep'. Picks first pid that comes after searching this string in full argument string of processes")
+    parser.add_argument("-c", "--command", type=str, required=True, help="Command to execute once target process terminates.")
+    return parser.parse_args()
+
+def is_process_running(pid: int) -> bool:
+    """
+    Check if a process with the given PID is still running.
+    Args:
+        pid (str): Process ID to check
+    Returns:
+        bool: True if process is running, False otherwise
+    """
+    try:
+        os.kill(int(pid), 0)
+    except OSError:
+        return False
+    return True
+
+def wait_for_pid(pid: int) -> int:
+    """
+    Block execution until the specified process is no longer running.
+    Args:
+        pid (str): Process ID to monitor
+    Returns:
+        int: Number of seconds program had to wait for process to finish execution.
+    """
+    logger.info(f"Waiting for process with pid {pid} to finish execution")
+    counter = 0
+    while is_process_running(pid):
+        counter += 1
+        time.sleep(1)
+    return counter
+
+def run_command(command: str):
+    """
+    Execute a shell command.
+    Args:
+        command (str): Shell command to execute
+    """
+    logger.info(f"Running command: {command}")
+    try:
+        subprocess.run(command, shell=True)
+    except subprocess.CalledProcessError as e:
+        logger.error(f"Command failed with return code {e.returncode}")
+        exit(1)
+
+def get_pid_from_search_string(searchStr: str) -> int:
+    """
+    Get the first PID that matches the search string using pgrep.
+    Args:
+        searchStr (str): String to search for in process names/arguments
+    Returns:
+        int: Process ID of the first matching process
+    Raises:
+        SystemExit: If no matching process is found
+    """
+    try:
+        result = subprocess.run(['pgrep', '-f', searchStr], capture_output=True, text=True)
+        if result.returncode != 0:
+            logger.error(f"No process found matching '{searchStr}'")
+            exit(1)
+        
+        # Get first PID from output (pgrep can return multiple PIDs)
+        pid = int(result.stdout.split('\n')[0])
+        logger.info(f"Found process with PID: {pid}")
+        return pid
+    except subprocess.CalledProcessError as e:
+        logger.error(f"Error running pgrep: {e}")
+        exit(1)
+
+def main():
+    """
+    Main function that:
+    1. Parses command line arguments
+    2. Waits for specified process to end
+    3. Executes the provided command
+    """
+    args = parse_args()
+    logger.debug(f"Command line arguments passed: {args}")
+    pid = 0
+    if args.process_search_string:
+        pid = get_pid_from_search_string(args.process_search_string)
+    else:
+        pid = args.pid
+    counter = wait_for_pid(pid)
+    if counter == 0:
+        logger.warning("Process was not found to be running. Still executing command.")
+    run_command(args.command)
+
+if __name__ == "__main__":
+    main()
