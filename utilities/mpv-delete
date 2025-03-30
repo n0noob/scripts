@@ -1,0 +1,133 @@
+#!/usr/bin/env python3
+import os
+import glob
+import sys
+import logging
+
+logging.basicConfig(
+    level=logging.DEBUG,
+    format="%(levelname)s - %(message)s"
+)
+
+logger = logging.getLogger(__name__)
+
+# Common media extensions (add more if needed)
+MEDIA_EXTS = {'.mp4', '.m4v', '.mkv', '.avi', '.mov', '.flv', '.webm'}
+
+def find_playing_file():
+    candidates = []
+    
+    # Check all processes in /proc
+    for proc_dir in glob.glob('/proc/[0-9]*'):
+        try:
+            # Get process name
+            with open(f"{proc_dir}/comm", 'r') as f:
+                if f.read().strip().lower() != 'mpv':
+                    continue
+            
+            # Method 1: Check command-line arguments
+            with open(f"{proc_dir}/cmdline", 'rb') as f:
+                cmd_args = f.read().split(b'\x00')
+                for arg in cmd_args:
+                    try:
+                        filepath = arg.decode().strip()
+                        if os.path.isfile(filepath):
+                            ext = os.path.splitext(filepath)[1].lower()
+                            if ext in MEDIA_EXTS:
+                                candidates.append(filepath)
+                    except UnicodeDecodeError:
+                        continue
+
+            # Method 2: Check open file descriptors
+            fd_dir = f"{proc_dir}/fd"
+            if os.path.exists(fd_dir):
+                for fd in os.listdir(fd_dir):
+                    fd_path = os.path.join(fd_dir, fd)
+                    if os.path.islink(fd_path):
+                        try:
+                            real_path = os.readlink(fd_path)
+                            if os.path.isfile(real_path):
+                                ext = os.path.splitext(real_path)[1].lower()
+                                if ext in MEDIA_EXTS:
+                                    candidates.append(real_path)
+                        except (FileNotFoundError, OSError):
+                            continue
+
+        except (FileNotFoundError, PermissionError, ProcessLookupError):
+            continue
+
+    # Select most likely candidate
+    if candidates:
+        # Prefer command-line arguments over FD paths
+        unique = list(dict.fromkeys(candidates))  # preserve order
+        return max(unique, key=lambda x: (os.path.getsize(x), x in candidates[:len(unique)//2]))
+    
+    return None
+
+def delete_file_safely(filepath):
+    if not os.path.isfile(filepath):
+        logger.error(f"Error: '{filepath}' does not exist or is not a file")
+        return False
+    
+    try:
+        os.remove(filepath)
+        logger.info(f"Successfully deleted: {filepath}")
+        return True
+    except PermissionError:
+        logger.error(f"Permission denied: Could not delete {filepath}")
+        return False
+    except Exception as e:
+        logger.error(f"Error deleting file: {str(e)}")
+        return False
+
+def human_readable_size(size_bytes):
+    """Convert bytes to human-readable format"""
+    units = ('B', 'KB', 'MB', 'GB', 'TB')
+    size = float(size_bytes)
+    for unit in units:
+        if size < 1024.0 or unit == units[-1]:
+            break
+        size /= 1024.0
+    return f"{size:.2f} {unit}"
+
+if __name__ == "__main__":
+    current_file = find_playing_file()
+    if not current_file:
+        logger.warning("No mpv media files found")
+        sys.exit(0)
+        
+    logger.info(f"Currently playing file detected: {current_file}")
+    
+    # Safety checks
+    if not os.path.exists(current_file):
+        logger.error("File does not exist!")
+        sys.exit(1)
+        
+    if not os.path.isfile(current_file):
+        logger.error(f"{current_file} is not a file")
+        sys.exit(1)
+    
+    # Confirmation
+    try:
+        confirm = input("Press ENTER to move to Trash, any key + ENTER to cancel: ")
+    except KeyboardInterrupt:
+        logger.error("Cancelled by user")
+        sys.exit(0)
+    
+    if confirm.strip() != "":
+        logger.error("Cancelled")
+        sys.exit(0)
+
+    # Get file size before moving
+    try:
+        file_size = os.path.getsize(current_file)
+    except OSError:
+        logger.error("Could not get file size")
+        sys.exit(1)
+    
+    # Attempt deletion
+    if delete_file_safely(current_file):
+        human_size = human_readable_size(file_size)
+        logger.info(f"{human_size} cleared!!")
+    else:
+        logger.error("Failed to delete file")
