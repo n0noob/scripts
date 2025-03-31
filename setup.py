@@ -3,10 +3,12 @@
 import os
 import sys
 import logging
+import shutil
 
 SCRIPTS_TO_INSTALL = [
     "./run-after/run-after",
-    "./utilities/mpv-delete"
+    "./utilities/mpv-delete",
+    "./dotmgr/dotmgr"
 ]
 
 logging.basicConfig(
@@ -16,7 +18,7 @@ logging.basicConfig(
 
 logger = logging.getLogger("setup")
 
-def is_python_script(file_path, logger):
+def is_python_script(file_path):
     """Check if a file is a Python script using shebang line."""
     try:
         with open(file_path, 'r') as f:
@@ -32,11 +34,34 @@ def is_python_script(file_path, logger):
         logger.error(f"Error reading {file_path}: {str(e)}")
         return False
 
-def ensure_executable(file_path, logger):
+def ensure_executable(file_path):
     """Ensure the script is executable."""
     if not os.access(file_path, os.X_OK):
         os.chmod(file_path, 0o755)
         logger.info(f"Made {os.path.basename(file_path)} executable")
+
+def needs_update(source_path, dest_path):
+    """Check if source is newer than destination file."""
+    if not os.path.exists(dest_path):
+        return True
+        
+    try:
+        source_mtime = os.path.getmtime(source_path)
+        dest_mtime = os.path.getmtime(dest_path)
+        return source_mtime > dest_mtime
+    except OSError as e:
+        logger.error(f"Error checking modification times: {str(e)}")
+        return True
+
+def install_script(source_path, dest_path):
+    """Copy script and set permissions."""
+    try:
+        shutil.copy2(source_path, dest_path)
+        ensure_executable(dest_path)
+        return True
+    except Exception as e:
+        logger.error(f"Failed to install {os.path.basename(source_path)}: {str(e)}")
+        return False
 
 def main():
     target_dir = '/usr/local/bin'
@@ -54,6 +79,7 @@ def main():
 
     # Process specified scripts
     installed = []
+    updated = []
     skipped = []
     for script in SCRIPTS_TO_INSTALL:
         script_path = os.path.abspath(script)
@@ -64,41 +90,48 @@ def main():
             skipped.append(filename)
             continue
             
-        if not is_python_script(script_path, logger):
+        if not is_python_script(script_path):
             skipped.append(filename)
             continue
 
-        ensure_executable(script_path, logger)
-
         dest_path = os.path.join(target_dir, filename)
-        source_abspath = os.path.abspath(script_path)
 
-        # Handle existing files
+        # Handle existing installations
         if os.path.exists(dest_path):
             if os.path.islink(dest_path):
-                if os.path.realpath(dest_path) == source_abspath:
-                    logger.debug(f"Already exists: {filename}")
-                    skipped.append(filename)
+                logger.info(f"Replacing symlink with file copy: {filename}")
+                os.unlink(dest_path)
+                
+            if os.path.isfile(dest_path):
+                if needs_update(script_path, dest_path):
+                    if install_script(script_path, dest_path):
+                        updated.append(filename)
+                        logger.info(f"Updated: {filename}")
+                    else:
+                        skipped.append(filename)
                 else:
-                    logger.info(f"Updating symlink: {filename}")
-                    os.unlink(dest_path)
-                    os.symlink(source_abspath, dest_path)
-                    installed.append(filename)
+                    skipped.append(filename)
+                    logger.debug(f"Already up-to-date: {filename}")
             else:
-                logger.warning(f"Skipping {filename}: Existing regular file")
+                logger.warning(f"Skipping {filename}: Path exists but is not a file")
                 skipped.append(filename)
         else:
-            logger.info(f"Installing: {filename}")
-            os.symlink(source_abspath, dest_path)
-            installed.append(filename)
+            if install_script(script_path, dest_path):
+                installed.append(filename)
+                logger.info(f"Installed: {filename}")
+            else:
+                skipped.append(filename)
 
     # Summary
     logger.info("\nInstallation Summary:")
-    logger.info(f"Successfully installed/updated: {len(installed)}")
+    logger.info(f"New installations: {len(installed)}")
+    logger.info(f"Updates: {len(updated)}")
     logger.info(f"Skipped: {len(skipped)}")
     
     if installed:
         logger.debug("Installed items: " + ", ".join(installed))
+    if updated:
+        logger.debug("Updated items: " + ", ".join(updated))
     if skipped:
         logger.debug("Skipped items: " + ", ".join(skipped))
 

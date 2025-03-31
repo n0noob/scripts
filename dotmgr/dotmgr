@@ -1,0 +1,248 @@
+#!/usr/bin/env python3
+import argparse
+import logging
+import shutil
+import sys
+import yaml
+from pathlib import Path
+from typing import Dict, List
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(name)s - %(levelname)s - %(message)s"
+)
+logger = logging.getLogger('dotmgr')
+
+CONFIG_PATH = Path.home() / ".config/dotmgr/config.yaml"
+DEFAULT_CONFIG = {
+    'dotfiles_dir': str(Path.home() / ".dotfiles"),
+    'apps': {}
+}
+
+class CustomYamlDumper(yaml.SafeDumper):
+    def represent_dict(self, data):
+        return super().represent_dict({
+            k: v for k, v in data.items()
+            if not (isinstance(v, (list, dict)) and not v)
+        })
+
+yaml.add_representer(dict, CustomYamlDumper.represent_dict, Dumper=CustomYamlDumper)
+
+def get_dotfiles_dir(config: Dict) -> Path:
+    return Path(config['dotfiles_dir']).expanduser()
+
+def read_config() -> Dict:
+    if not CONFIG_PATH.exists():
+        return DEFAULT_CONFIG.copy()
+    
+    with open(CONFIG_PATH, 'r') as f:
+        config = yaml.safe_load(f) or DEFAULT_CONFIG.copy()
+    
+    config.setdefault('dotfiles_dir', DEFAULT_CONFIG['dotfiles_dir'])
+    config.setdefault('apps', {})
+    
+    for app in config['apps'].values():
+        app.setdefault('files', [])
+        app.setdefault('dirs', [])
+        app.setdefault('system_files', [])
+    
+    return config
+
+def save_config(config: Dict):
+    CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with open(CONFIG_PATH, 'w') as f:
+        yaml.dump(config, f, Dumper=CustomYamlDumper, default_flow_style=False, sort_keys=False)
+
+def resolve_path(path: str) -> Path:
+    return Path(path).expanduser().resolve()
+
+def initialize(dotfiles_dir: str):
+    config = DEFAULT_CONFIG.copy()
+    config['dotfiles_dir'] = dotfiles_dir
+    save_config(config)
+    
+    dotfiles_path = Path(dotfiles_dir).expanduser()
+    dotfiles_path.mkdir(exist_ok=True)
+    
+    logger.info(f"Initialized dotfiles directory at {dotfiles_path}")
+    logger.info("Add this manager to itself:")
+    logger.info(f"  dotmgr add dotmgr {CONFIG_PATH}")
+
+def add_configuration(app_name: str, paths: List[str]):
+    config = read_config()
+    app_config = config['apps'].setdefault(app_name, {'files': [], 'dirs': [], 'system_files': []})
+    dotfiles_dir = get_dotfiles_dir(config)
+    home = Path.home()
+
+    for path in paths:
+        try:
+            source = resolve_path(path)
+            if not source.exists():
+                logger.error(f"Path does not exist: {source}")
+                continue
+
+            if source.is_relative_to(home):
+                path_type = 'user'
+                rel_path = source.relative_to(home)
+                dest = dotfiles_dir / app_name / 'user' / rel_path
+                operation = shutil.move
+            else:
+                path_type = 'system'
+                rel_path = source.relative_to(Path('/'))
+                dest = dotfiles_dir / app_name / 'system' / rel_path
+                operation = shutil.copy2
+
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            operation(str(source), str(dest))
+            logger.info(f"Copied {path_type} file: {source} → {dest}")
+
+            if path_type == 'user':
+                source.symlink_to(dest)
+                logger.info(f"Created symlink: {source} → {dest}")
+
+            config_key = 'system_files' if path_type == 'system' else 'files' if source.is_file() else 'dirs'
+            if str(rel_path) not in app_config[config_key]:
+                app_config[config_key].append(str(rel_path))
+
+        except Exception as e:
+            logger.error(f"Failed to add {path}: {str(e)}")
+
+    save_config(config)
+    logger.info("Configuration updated successfully")
+
+def install_dotfiles():
+    config = read_config()
+    dotfiles_dir = get_dotfiles_dir(config)
+    home = Path.home()
+
+    for app_name, app_config in config['apps'].items():
+        for entry_type in ['files', 'dirs']:
+            for rel_path in app_config.get(entry_type, []):
+                source = dotfiles_dir / app_name / 'user' / rel_path
+                target = home / rel_path
+                
+                if not source.exists():
+                    logger.warning(f"Missing source file: {source}")
+                    continue
+
+                try:
+                    if target.exists() and not target.is_symlink():
+                        logger.error(f"Existing file conflicts with dotfile: {target}")
+                        continue
+                    
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    if target.exists():
+                        target.unlink()
+                    target.symlink_to(source)
+                    logger.info(f"Linked {target} → {source}")
+                except Exception as e:
+                    logger.error(f"Failed to link {rel_path}: {str(e)}")
+
+        for rel_path in app_config.get('system_files', []):
+            source = dotfiles_dir / app_name / 'system' / rel_path
+            target = Path('/') / rel_path
+
+            if not source.exists():
+                logger.warning(f"Missing system file: {source}")
+                continue
+
+            try:
+                shutil.copy2(str(source), str(target))
+                logger.info(f"Installed system file: {target}")
+            except PermissionError:
+                logger.error(f"Need sudo to install system file: {target}")
+
+def remove_app_config(app_name: str):
+    config = read_config()
+    
+    if app_name not in config['apps']:
+        logger.error(f"Application '{app_name}' not found")
+        return
+
+    app_config = config['apps'][app_name]
+    dotfiles_dir = get_dotfiles_dir(config)
+    home = Path.home()
+
+    try:
+        # Process user files
+        for entry_type in ['files', 'dirs']:
+            for rel_path in app_config.get(entry_type, []):
+                source = dotfiles_dir / app_name / 'user' / rel_path
+                target = home / rel_path
+                
+                if target.exists():
+                    if target.is_symlink() and target.resolve() == source:
+                        target.unlink()
+                        logger.info(f"Removed symlink: {target}")
+                        if source.exists():
+                            shutil.move(str(source), str(target))
+                            logger.info(f"Restored original: {target}")
+                    else:
+                        logger.warning(f"Skipping non-managed file: {target}")
+                elif source.exists():
+                    shutil.move(str(source), str(target))
+                    logger.info(f"Restored original: {target}")
+
+        # Remove system file copies
+        for rel_path in app_config.get('system_files', []):
+            source = dotfiles_dir / app_name / 'system' / rel_path
+            if source.exists():
+                if source.is_dir():
+                    shutil.rmtree(source)
+                else:
+                    source.unlink()
+                logger.info(f"Removed system copy: {source}")
+
+        # Cleanup app directory
+        app_dir = dotfiles_dir / app_name
+        if app_dir.exists():
+            shutil.rmtree(app_dir)
+            logger.info(f"Removed app directory: {app_dir}")
+
+        # Update config
+        del config['apps'][app_name]
+        save_config(config)
+        logger.info(f"Removed '{app_name}' configuration")
+
+    except Exception as e:
+        logger.error(f"Removal failed: {str(e)}")
+        sys.exit(1)
+
+def main():
+    parser = argparse.ArgumentParser(prog='dotmgr', description='Dotfiles Management System')
+    subparsers = parser.add_subparsers(dest='command', required=True)
+
+    init_parser = subparsers.add_parser('init', help='Initialize configuration')
+    init_parser.add_argument('--dotfiles-dir', default="~/.dotfiles",
+                            help='Dotfiles storage directory')
+
+    subparsers.add_parser('install', help='Install all configurations')
+    
+    add_parser = subparsers.add_parser('add', help='Add new configuration')
+    add_parser.add_argument('app_name', help='Application name')
+    add_parser.add_argument('paths', nargs='+', help='Paths to manage')
+
+    remove_parser = subparsers.add_parser('remove', help='Remove application configuration')
+    remove_parser.add_argument('app_name', help='Name of the application to remove')
+
+    args = parser.parse_args()
+
+    if args.command != 'init' and not CONFIG_PATH.exists():
+        logger.error("Configuration missing. First run: dotmgr init")
+        sys.exit(1)
+
+    try:
+        if args.command == 'init':
+            initialize(args.dotfiles_dir)
+        elif args.command == 'install':
+            install_dotfiles()
+        elif args.command == 'add':
+            add_configuration(args.app_name, args.paths)
+        elif args.command == 'remove':
+            remove_app_config(args.app_name)
+    except Exception as e:
+        logger.error(f"Operation failed: {str(e)}")
+        sys.exit(1)
+
+if __name__ == "__main__":
+    main()
