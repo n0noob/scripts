@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+
 import argparse
 import logging
 import shutil
@@ -18,6 +19,8 @@ DEFAULT_CONFIG = {
     'dotfiles_dir': str(Path.home() / ".dotfiles"),
     'apps': {}
 }
+
+COMMON_APPS = ["sway", "hypr", "bspwm", "i3", "wofi", "dunst", "feh", "git", "kitty", "mpv", ]
 
 class CustomYamlDumper(yaml.SafeDumper):
     def represent_dict(self, data):
@@ -110,47 +113,48 @@ def add_configuration(app_name: str, paths: List[str]):
     save_config(config)
     logger.info("Configuration updated successfully")
 
-def install_dotfiles():
+def install_dotfiles(package_name: str):
     config = read_config()
     dotfiles_dir = get_dotfiles_dir(config)
     home = Path.home()
 
     for app_name, app_config in config['apps'].items():
-        for entry_type in ['files', 'dirs']:
-            for rel_path in app_config.get(entry_type, []):
-                source = dotfiles_dir / app_name / 'user' / rel_path
-                target = home / rel_path
-                
+        if package_name and app_name == package_name:
+            for entry_type in ['files', 'dirs']:
+                for rel_path in app_config.get(entry_type, []):
+                    source = dotfiles_dir / app_name / rel_path
+                    target = home / rel_path
+                    
+                    if not source.exists():
+                        logger.warning(f"Missing source file: {source}")
+                        continue
+
+                    try:
+                        if target.exists() and not target.is_symlink():
+                            logger.error(f"Existing file conflicts with dotfile: {target}")
+                            continue
+                        
+                        target.parent.mkdir(parents=True, exist_ok=True)
+                        if target.exists():
+                            target.unlink()
+                        target.symlink_to(source)
+                        logger.info(f"Linked {target} → {source}")
+                    except Exception as e:
+                        logger.error(f"Failed to link {rel_path}: {str(e)}")
+
+            for rel_path in app_config.get('system_files', []):
+                source = dotfiles_dir / app_name / 'system' / rel_path
+                target = Path('/') / rel_path
+
                 if not source.exists():
-                    logger.warning(f"Missing source file: {source}")
+                    logger.warning(f"Missing system file: {source}")
                     continue
 
                 try:
-                    if target.exists() and not target.is_symlink():
-                        logger.error(f"Existing file conflicts with dotfile: {target}")
-                        continue
-                    
-                    target.parent.mkdir(parents=True, exist_ok=True)
-                    if target.exists():
-                        target.unlink()
-                    target.symlink_to(source)
-                    logger.info(f"Linked {target} → {source}")
-                except Exception as e:
-                    logger.error(f"Failed to link {rel_path}: {str(e)}")
-
-        for rel_path in app_config.get('system_files', []):
-            source = dotfiles_dir / app_name / 'system' / rel_path
-            target = Path('/') / rel_path
-
-            if not source.exists():
-                logger.warning(f"Missing system file: {source}")
-                continue
-
-            try:
-                shutil.copy2(str(source), str(target))
-                logger.info(f"Installed system file: {target}")
-            except PermissionError:
-                logger.error(f"Need sudo to install system file: {target}")
+                    shutil.copy2(str(source), str(target))
+                    logger.info(f"Installed system file: {target}")
+                except PermissionError:
+                    logger.error(f"Need sudo to install system file: {target}")
 
 def remove_app_config(app_name: str):
     config = read_config()
@@ -216,7 +220,10 @@ def main():
     init_parser.add_argument('--dotfiles-dir', default="~/.dotfiles",
                             help='Dotfiles storage directory')
 
-    subparsers.add_parser('install', help='Install all configurations')
+    install_parser = subparsers.add_parser('install', help='Installs dot files')
+    install_command_group = install_parser.add_mutually_exclusive_group(required=True)
+    install_command_group.add_argument("--package", help="Package configuration to install from default dot files location to host")
+    # install_command_group.add_argument("all", nargs=None, help="Install all the dot files")
     
     add_parser = subparsers.add_parser('add', help='Add new configuration')
     add_parser.add_argument('app_name', help='Application name')
@@ -235,7 +242,7 @@ def main():
         if args.command == 'init':
             initialize(args.dotfiles_dir)
         elif args.command == 'install':
-            install_dotfiles()
+            install_dotfiles(args.package)
         elif args.command == 'add':
             add_configuration(args.app_name, args.paths)
         elif args.command == 'remove':

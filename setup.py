@@ -11,6 +11,8 @@ SCRIPTS_TO_INSTALL = [
     "./dotmgr/dotmgr"
 ]
 
+INSTALL_DIR = '/usr/local/bin'
+
 logging.basicConfig(
     level=logging.DEBUG,
     format="%(name)s - %(levelname)s - %(message)s"
@@ -64,18 +66,13 @@ def install_script(source_path, dest_path):
         return False
 
 def main():
-    target_dir = '/usr/local/bin'
-
     # Root check
     if os.geteuid() != 0:
         logger.error("This script requires root privileges. Use sudo.")
-        logger.info("Try: sudo python3 install-scripts.py")
         sys.exit(1)
 
-    # Ensure target directory exists
-    if not os.path.exists(target_dir):
-        os.makedirs(target_dir, exist_ok=True)
-        logger.info(f"Created target directory: {target_dir}")
+    if not os.path.exists(INSTALL_DIR):
+        logger.info(f"Default script installation directory does not exist: {INSTALL_DIR}")
 
     # Process specified scripts
     installed = []
@@ -94,7 +91,7 @@ def main():
             skipped.append(filename)
             continue
 
-        dest_path = os.path.join(target_dir, filename)
+        dest_path = os.path.join(INSTALL_DIR, filename)
 
         # Handle existing installations
         if os.path.exists(dest_path):
@@ -123,11 +120,7 @@ def main():
                 skipped.append(filename)
 
     # Summary
-    logger.info("\nInstallation Summary:")
-    logger.info(f"New installations: {len(installed)}")
-    logger.info(f"Updates: {len(updated)}")
-    logger.info(f"Skipped: {len(skipped)}")
-    
+    logger.info("Installation Summary:")
     if installed:
         logger.debug("Installed items: " + ", ".join(installed))
     if updated:
