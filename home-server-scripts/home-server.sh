@@ -11,10 +11,10 @@ start_server() {
 
 stop_server() {
     echo "Stopping home server..."
-    media-mount unmount
     pushd ~/.containers/home-server
     podman-compose down
     popd
+    media-mount unmount
 }
 
 print_help() {
