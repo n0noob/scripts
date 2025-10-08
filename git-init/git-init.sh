@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 ##################################################
-# Use this script for adding git user and email  #
+# Use this script for setting up git             #
 ##################################################
 
 pacman -Qi git >/dev/null 2>&1
