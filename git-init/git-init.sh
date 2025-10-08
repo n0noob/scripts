@@ -30,10 +30,20 @@ fi
 echo "Setting user  : >$user<"
 echo "Setting email : >$email<"
 
-git config --global user.name "\"$user\""
-git config --global user.email "\"$email\""
+git config --global user.name "$user"
+git config --global user.email "$email"
 git config --global credential.helper cache
 git config --global credential.helper 'cache --timeout=3600'
+
+# Generate ssh key
+echo "Generating ssh key for git...please press enter to all prompts"
+ssh-keygen -t ed25519 -C "$email"
+eval "$(ssh-agent -s)"
+ssh-add ~/.ssh/id_ed25519
+echo "#######################################################################"
+cat ~/.ssh/id_ed25519.pub
+echo "#######################################################################"
+echo "Copy the above ssh key and add it to your git account"
 
 echo "git config --global --list"
 
