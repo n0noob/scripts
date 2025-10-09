@@ -1,0 +1,143 @@
+#!/usr/bin/env python3
+
+import os
+import logging
+import shutil
+from argparse import ArgumentParser
+from pathlib import Path
+
+BIN_PATH = {
+    "user": "~/.local/bin",
+    "system": "/usr/local/bin"
+}
+
+logging.basicConfig(
+    level=logging.DEBUG,
+    format="[%(name)s: %(levelname)s] - %(message)s"
+)
+
+logger = logging.getLogger("install-script")
+
+def is_script(file_path: Path) -> bool:
+    """Check if a file is a Python script using shebang line."""
+    try:
+        with open(file_path, 'r') as f:
+            first_line = f.readline().strip()
+            if not first_line.startswith('#!'):
+                logger.warning(f"Skipping {file_path}: Missing shebang")
+                return False
+            return True
+    except Exception as e:
+        logger.error(f"Error reading {file_path}: {str(e)}")
+        return False
+
+def ensure_executable(file_path: Path) -> None:
+    """Ensure the script is executable."""
+    if not os.access(str(file_path), os.X_OK):
+        os.chmod(str(file_path), 0o755)
+        logger.info(f"Made {file_path.name} executable")
+
+def needs_update(source_path: Path, dest_path: Path) -> bool:
+    """Check if source is newer than destination file."""
+    if not dest_path.exists():
+        return True
+    try:
+        source_mtime = source_path.stat().st_mtime
+        dest_mtime = dest_path.stat().st_mtime
+        return source_mtime > dest_mtime
+    except OSError as e:
+        logger.error(f"Error checking modification times: {str(e)}")
+        return True
+
+def install_script(source_path: Path, dest_path: Path) -> bool:
+    """Copy script and set permissions."""
+    try:
+        shutil.copy2(str(source_path), str(dest_path))
+        ensure_executable(dest_path)
+        return True
+    except Exception as e:
+        logger.error(f"Failed to install {source_path.name}: {str(e)}")
+        return False
+
+def main() -> None:
+    parser = ArgumentParser(description="Installs script(s) to user(default) or system bin directory")
+    parser.add_argument("--system", action="store_true", help="Installs in system-wide bin directory")
+    parser.add_argument("scripts", help="Comma-separated script names (no spaces)")
+
+    args = parser.parse_args()
+
+    if not args.scripts.strip():
+        parser.error("The 'scripts' argument must not be empty.")
+
+    script_list = [s.strip() for s in args.scripts.split(",") if s.strip()]
+    if not script_list:
+        parser.error("No valid script names provided.")
+
+    install_dir = Path(BIN_PATH["system"] if args.system else os.path.expanduser(BIN_PATH["user"]))
+
+    if os.geteuid() != 0 and args.system:
+        parser.error("This script requires root privileges. Use sudo.")
+
+    if not install_dir.exists():
+        raise FileNotFoundError(f"Default script installation directory does not exist: {install_dir}")
+
+    install_scripts(script_list, install_dir)
+
+    
+def install_scripts(script_list: list[str], install_dir: Path) -> bool:
+    # Process specified scripts
+    installed = []
+    updated = []
+    skipped = []
+    for script in script_list:
+        script_path = Path(script).resolve()
+        script_name = script_path.name
+
+        if not script_path.is_file():
+            logger.warning(f"Script not found: {script_path}")
+            skipped.append(script_name)
+            continue
+
+        if not is_script(script_path):
+            skipped.append(script_name)
+            continue
+
+        dest_path = install_dir / script_name
+
+        # Handle existing installations
+        if dest_path.exists():
+            if dest_path.is_symlink():
+                logger.info(f"Replacing symlink with file copy: {script_name}")
+                dest_path.unlink()
+
+            if dest_path.is_file():
+                if needs_update(script_path, dest_path):
+                    if install_script(script_path, dest_path):
+                        updated.append(script_name)
+                        logger.info(f"Updated: {script_name}")
+                    else:
+                        skipped.append(script_name)
+                else:
+                    skipped.append(script_name)
+                    logger.debug(f"Already up-to-date: {script_name}")
+            else:
+                logger.warning(f"Skipping {script_name}: Path exists but is not a file")
+                skipped.append(script_name)
+        else:
+            if install_script(script_path, dest_path):
+                installed.append(script_name)
+                logger.info(f"Installed: {script_name}")
+            else:
+                skipped.append(script_name)
+
+    # Summary
+    logger.info("Installation Summary:")
+    if installed:
+        logger.debug("Installed items: " + ", ".join(installed))
+    if updated:
+        logger.debug("Updated items: " + ", ".join(updated))
+    if skipped:
+        logger.debug("Skipped items: " + ", ".join(skipped))
+
+if __name__ == '__main__':
+    main()
