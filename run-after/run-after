@@ -64,8 +64,7 @@ def run_command(command: str):
     try:
         subprocess.run(command, shell=True)
     except subprocess.CalledProcessError as e:
-        logger.error(f"Command failed with return code {e.returncode}")
-        exit(1)
+        raise RuntimeError(f"Provided command '{command}' failed with error: {str(e)}") from e
 
 def get_pid_from_search_string(searchStr: str) -> int:
     """
@@ -80,16 +79,21 @@ def get_pid_from_search_string(searchStr: str) -> int:
     try:
         result = subprocess.run(['pgrep', '-f', searchStr], capture_output=True, text=True)
         if result.returncode != 0:
-            logger.error(f"No process found matching '{searchStr}'")
-            exit(1)
-        
-        # Get first PID from output (pgrep can return multiple PIDs)
-        pid = int(result.stdout.split('\n')[0])
+            raise ProcessLookupError(f"No process found matching '{searchStr}'")
+
+        # pgrep can return multiple PIDs (one per line). Parse and exclude self PID.
+        current_pid = os.getpid()
+        pids = [int(p) for p in result.stdout.splitlines() if p.strip().isdigit()]
+        # Filter out current process PID
+        filtered = [p for p in pids if p != current_pid]
+        if not filtered:
+            raise ProcessLookupError(f"No process found matching '{searchStr}' (other than current PID {current_pid})")
+
+        pid = filtered[0]
         logger.info(f"Found process with PID: {pid}")
         return pid
     except subprocess.CalledProcessError as e:
-        logger.error(f"Error running pgrep: {e}")
-        exit(1)
+        raise RuntimeError("pgrep failed to search for running process") from e
 
 def main():
     """
@@ -101,14 +105,18 @@ def main():
     args = parse_args()
     logger.debug(f"Command line arguments passed: {args}")
     pid = 0
-    if args.process_search_string:
-        pid = get_pid_from_search_string(args.process_search_string)
-    else:
-        pid = args.pid
-    counter = wait_for_pid(pid)
-    if counter == 0:
-        logger.warning("Process was not found to be running. Still executing command.")
-    run_command(args.command)
+    try:
+        if args.process_search_string:
+            pid = get_pid_from_search_string(args.process_search_string)
+        else:
+            pid = args.pid
+        counter = wait_for_pid(pid)
+        if counter == 0:
+            logger.warning("Process was not found to be running. Still executing command.")
+        run_command(args.command)
+    except Exception as e:
+        logger.error(str(e))
+        raise SystemExit(1)
 
 if __name__ == "__main__":
     main()
